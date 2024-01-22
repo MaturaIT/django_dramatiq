@@ -9,8 +9,7 @@ LOGGER = logging.getLogger("django_dramatiq.AdminMiddleware")
 
 
 class AdminMiddleware(Middleware):
-    """This middleware keeps track of task executions.
-    """
+    """This middleware keeps track of task executions."""
 
     def after_enqueue(self, broker, message, delay):
         from .models import Task
@@ -20,11 +19,14 @@ class AdminMiddleware(Middleware):
         if delay:
             status = Task.STATUS_DELAYED
 
-        Task.tasks.create_or_update_from_message(
-            message,
-            status=status,
-            actor_name=message.actor_name,
-            queue_name=message.queue_name,
+        Task.tasks.get_or_create(
+            id=message.message_id,
+            defaults={
+                "message_data": message.encode(),
+                "status": status,
+                "actor_name": message.actor_name,
+                "queue_name": message.queue_name,
+            },
         )
 
     def before_process_message(self, broker, message):
@@ -43,7 +45,9 @@ class AdminMiddleware(Middleware):
 
         self.after_process_message(broker, message, status=Task.STATUS_SKIPPED)
 
-    def after_process_message(self, broker, message, *, result=None, exception=None, status=None):
+    def after_process_message(
+        self, broker, message, *, result=None, exception=None, status=None
+    ):
         from .models import Task
 
         if exception is not None:
@@ -69,8 +73,7 @@ class AdminMiddleware(Middleware):
 
 
 class DbConnectionsMiddleware(Middleware):
-    """This middleware cleans up db connections on worker shutdown.
-    """
+    """This middleware cleans up db connections on worker shutdown."""
 
     def _close_old_connections(self, *args, **kwargs):
         db.close_old_connections()
