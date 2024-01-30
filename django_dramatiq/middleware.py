@@ -5,6 +5,8 @@ import traceback
 from django import db
 from dramatiq.middleware import Middleware
 
+from .utils import retry_n_times
+
 LOGGER = logging.getLogger("django_dramatiq.AdminMiddleware")
 
 
@@ -19,26 +21,33 @@ class AdminMiddleware(Middleware):
         if delay:
             status = Task.STATUS_DELAYED
 
-        Task.tasks.get_or_create(
-            id=message.message_id,
-            defaults={
-                "message_data": message.encode(),
-                "status": status,
-                "actor_name": message.actor_name,
-                "queue_name": message.queue_name,
-            },
-        )
+        def f():
+            Task.tasks.get_or_create(
+                id=message.message_id,
+                defaults={
+                    "message_data": message.encode(),
+                    "status": status,
+                    "actor_name": message.actor_name,
+                    "queue_name": message.queue_name,
+                },
+            )
+
+        retry_n_times(f, n=3)
 
     def before_process_message(self, broker, message):
         from .models import Task
 
         LOGGER.debug("Updating Task from message %r.", message.message_id)
-        Task.tasks.create_or_update_from_message(
-            message,
-            status=Task.STATUS_RUNNING,
-            actor_name=message.actor_name,
-            queue_name=message.queue_name,
-        )
+
+        def f():
+            Task.tasks.create_or_update_from_message(
+                message,
+                status=Task.STATUS_RUNNING,
+                actor_name=message.actor_name,
+                queue_name=message.queue_name,
+            )
+
+        retry_n_times(f, n=3)
 
     def after_skip_message(self, broker, message):
         from .models import Task
@@ -64,12 +73,16 @@ class AdminMiddleware(Middleware):
             status = Task.STATUS_DONE
 
         LOGGER.debug("Updating Task from message %r.", message.message_id)
-        Task.tasks.create_or_update_from_message(
-            message,
-            status=status,
-            actor_name=message.actor_name,
-            queue_name=message.queue_name,
-        )
+
+        def f():
+            Task.tasks.create_or_update_from_message(
+                message,
+                status=status,
+                actor_name=message.actor_name,
+                queue_name=message.queue_name,
+            )
+
+        retry_n_times(f, n=3)
 
 
 class DbConnectionsMiddleware(Middleware):
